@@ -22,8 +22,9 @@ void show_song(std::string song_name, std::string artist, bool clear) {
 
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
-  text = "\n\n\n" + indent.substr(0, (15 - song_name.length()) / 2) + song_name +
-         "\n\n" + indent.substr(0, (15 - artist.length()) / 2) + artist;
+  text = "\n\n\n" + indent.substr(0, (15 - song_name.length()) / 2) +
+         song_name + "\n\n" + indent.substr(0, (15 - artist.length()) / 2) +
+         artist;
 
   xTaskCreate(&task_ssd1306_display_text, "ssd1306_display_text", 2048,
               (void *)text.c_str(), 6, nullptr);
