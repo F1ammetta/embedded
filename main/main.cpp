@@ -1,7 +1,9 @@
 #include <cstring>
 #include <ctime>
+#include <driver/dac_cosine.h>
 #include <driver/gpio.h>
 #include <driver/i2c.h>
+#include <esp_attr.h>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <freertos/task.h>
@@ -37,7 +39,21 @@ extern "C" void app_main(void) {
   i2c_master_init();
   ssd1306_init();
 
+  dac_cosine_handle_t dac_cosine;
+
+  dac_cosine_config_t cos0_cfg = {
+      .chan_id = DAC_CHAN_0,
+      .freq_hz = 880, // It will be covered by 8000 in the latter configuration
+      .clk_src = DAC_COSINE_CLK_SRC_DEFAULT,
+      .atten = DAC_COSINE_ATTEN_DEFAULT,
+      .phase = DAC_COSINE_PHASE_0,
+      .offset = 0,
+  };
+
+  ESP_ERROR_CHECK(dac_cosine_new_channel(&cos0_cfg, &dac_cosine));
+  ESP_ERROR_CHECK(dac_cosine_start(dac_cosine));
+
   std::string song_name = "K626 Requiem";
-  std::string artist = "bethoven";
+  std::string artist = "Mozart";
   show_song(song_name, artist, true);
 }
