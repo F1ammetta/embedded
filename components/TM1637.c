@@ -1,348 +1,271 @@
-/*______________In the name of Allah, Most Gracious, Most Merciful______________
+/**
+ * ESP-32 IDF library for control TM1637 LED 7-Segment display
+ *
+ * Author: Petro <petro@petro.ws>
+ *
+ * Project homepage: https://github.com/petrows/esp-32-tm1637
+ * Example: https://github.com/petrows/esp-32-tm1637-example
+ *
+ */
 
-	This library is written to allow the STM32 micro-controller to handle TM1637 LED
-	driver using a manual communication protocol (through GPIO pins)
+#include "tm1637.h"
 
-	Created by 				: Ward Almasarani
-	Start Date 				: 2020/09/29
-	file name 				: tm1637.c
-	Version					: 1.0
-______________________________________________________________________________*/
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+#include <math.h>
 
-#ifndef tm1637
-#include "TM1637.h"
-#include "driver/gpio.h"
-
-#define SCLK_GPIO_NUM 13
-#define SDO_GPIO_NUM 12
-#define GPIO_PIN_SET 1
-#define GPIO_PIN_RESET 0
-
-extern uint32_t Timer1;
-extern uint8_t CurrentDisplay[4];
-extern uint8_t tm1637_Segments[8];
-void tm1637_CLKhigh()
-{																	  	//SCL high period
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_SET);		  	//Setting SCL frequency
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_SET);
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_SET);
-}
-void tm1637_CLKlow()
-{
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_RESET);		//SCL low period
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_RESET);
-	gpio_set_level(SCLK_GPIO_NUM, GPIO_PIN_RESET);
-}
-void tm1637_SDOhigh()
-{
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_SET);			//SDO high period
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_SET);
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_SET);
-}
-void tm1637_SDOlow()
-{
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_RESET);			//SDO low period
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_RESET);
-	gpio_set_level(SDO_GPIO_NUM, GPIO_PIN_RESET);
-}
-void tm1637_StartPacket()												//Lower SDO line while CLK line is high
-{
-	tm1637_CLKhigh();
-
-	tm1637_SDOhigh();
-	tm1637_SDOlow();
-
-	tm1637_CLKlow();
-}
-void tm1637_EndPacket()													//SDO line is pulled high while SCL line is high
-{
-	tm1637_CLKlow();
-	tm1637_SDOlow();
-
-	tm1637_CLKhigh();
-	tm1637_SDOhigh();
-}
-void tm1637_DataOut(uint8_t *tm1637_TxBuffer)							//Low level data transfer function
-{
-
-	for(int8_t j = 0; j < PACKET_SIZE; j++)								//Send least significant bit first
-	{
-		tm1637_CLKlow();
-		if(tm1637_TxBuffer[j] == GPIO_PIN_SET)							//Check logic level
-		{
-			tm1637_SDOhigh();
-
-		}
-		else
-		{
-			tm1637_SDOlow();
-
-		}
-		tm1637_CLKhigh();
-	}
-}
-void tm1637_TxCommand(uint8_t *Command)
-{																		//Handles high level (bit by bit) transmission operation
-	uint8_t ByteData[8] = {0};
-
-	for(uint8_t i = 0; i < PACKET_SIZE; i++)
-	{
-
-		ByteData[i] = (Command[0] & (0x01 << i)) && 1;
-
-																		//Convert from byte to bit per array element
-	}
-
-	tm1637_StartPacket();												//Send start packet bit
-	tm1637_DataOut(ByteData);											//Send one byte
-	tm1637_CLKlow();													//Send one CLK for acknowledgment
-	tm1637_CLKhigh();
-	tm1637_ACKcheck();													//wait for acknowledgment.
-	if((Command[0] & 0xC0) != (0xC0))										//Check if the received packet is not an address.
-	{
-		tm1637_EndPacket();
-	}
-
-}
-void tm1637_TxData(uint8_t *Data, uint8_t PacketSize)
-{																		//Handles high level (bit by bit) transmission operation
-	uint8_t ByteData[8] = {0};
-
-	for(uint8_t i = 0; i < PacketSize; i++)
-	{
-		for(uint8_t j = 0; j < 8; j++)
-		{
-			ByteData[j] = (Data[i] & (0x01 << j)) && 1;
-		}
-		tm1637_DataOut(ByteData);
-		tm1637_CLKlow();
-		tm1637_CLKhigh();
-		tm1637_ACKcheck();												//Transmit byte by byte
-
-	}
-	tm1637_EndPacket();													//Send end packet at the end of data transmission.
-
-
-}
-void tm1637_Initialize(uint8_t Direction)								//Since SDI line is doing both transmission and reception
-{
-	switch (Direction)													//Depending on the function input initialize the pin as input or output
-	{
-		case DISPLAY2ESP:
-			gpio_set_direction(SCLK_GPIO_NUM, GPIO_MODE_INPUT);
-			break;
-		case ESP2DISPLAY:
-			gpio_set_direction(SCLK_GPIO_NUM, GPIO_MODE_OUTPUT);
-			break;
-
-	}
-
-}
-void tm1637_ACKcheck()
-{
-	//Wait for acknowledgment bit
-	tm1637_Initialize(DISPLAY2ESP);										//initialize pin as input
-	tm1637_CLKlow();													//lower CLK line
-	while(gpio_get_level(SCLK_GPIO_NUM))					//Wait until ACK bit is received
-	tm1637_Initialize(ESP2DISPLAY);										//initialize pin as output for data transfer
-}
-void tm1637_DisplayClear()
-{
-	uint8_t EmptyBuffer[4] = {0};
-	uint8_t CommandCarrier[1] = {0};
-	CommandCarrier[0] = DATA_SET;									//Send set data command
-	tm1637_TxCommand(CommandCarrier);
-	CommandCarrier[0] = C0H;										//Set address
-	tm1637_TxCommand(CommandCarrier);
-	tm1637_TxData(EmptyBuffer, 4);
-	CommandCarrier[0] = DISPLAY_OFF;
-	tm1637_TxCommand(CommandCarrier);
-}
-uint8_t tm1637_DisplayHandle(uint8_t Brightness, uint8_t *DisplayBuffer)
-{
-	//This function handles the low level protocol used to set data address of TM1637 and turn the display on
-	//#param Brightness is used to set the brightness level of the display. This function accepts Brightness value between 0 and 7
-	//#param *DisplayBuffer is the buffer used to map data from the RAM to the display each element corresponds to one segment in the display
-	uint8_t CommandCarrier[1] = {0};
-	tm1637_StatusTypedef ParameterFalidation = TM1637_ERROR;
-	if(Brightness <= 7)												//there are 7 levels of brightness
-	{
-	  CommandCarrier[0] = DATA_SET;									//Send set data command
-	  tm1637_TxCommand(CommandCarrier);
-	  CommandCarrier[0] = C0H;										//Set address
-	  tm1637_TxCommand(CommandCarrier);
-
-	  tm1637_TxData(DisplayBuffer, 4);								//Map the data stored in RAM to the display
-	  tm1637_SetBrighness(Brightness);								//Turn on display and set brightness
-		ParameterFalidation = TM1637_OK;
-		return ParameterFalidation;
-	}
-	return ParameterFalidation;
-}
-tm1637_StatusTypedef tm1637_SetBrighness(uint8_t BrighnessLevel)
-{
-	uint8_t BrighnessBuffer[8] = {0};
-	tm1637_StatusTypedef ParameterFalidation = TM1637_ERROR;
-	if(BrighnessLevel <= 7)												//there are 7 levels of brightness
-	{																	//Any value above that will be ignored.
-		BrighnessLevel = BrighnessLevel | DISPLAY_ON;					//Set Brightness level with display on command
-
-		for(uint8_t i = 0; i < 8; i++)
-		{
-			BrighnessBuffer[i] = (BrighnessLevel & (0x01 << i)) && 1;
-		}
-		tm1637_StartPacket();
-		tm1637_DataOut(BrighnessBuffer);
-		tm1637_CLKlow();													//Send one CLK for acknowledgment
-		tm1637_CLKhigh();
-		tm1637_ACKcheck();													//wait for acknowledgment.
-		tm1637_EndPacket();
-		ParameterFalidation = TM1637_OK;
-		return ParameterFalidation;
-	}
-	return ParameterFalidation;
-}
-void tm1637_Effect(uint8_t Rotationfrequency)
-{
-	  static uint8_t SegmentTracker = 0;
-	  static uint8_t SegmentPointer = 0;
-	  if(Timer1 >= 150)
-	  {
-		  Timer1 = 0;
-		  if(SegmentTracker < 4)
-		  {
-			  CurrentDisplay[0] = 0;
-			  CurrentDisplay[1] = 0;
-			  CurrentDisplay[2] = 0;
-			  CurrentDisplay[3] = tm1637_Segments[SegmentPointer];
-			  if(SegmentPointer != 3)
-			  {
-				  SegmentPointer ++;									//Prevent extra incrementing
-			  }
-		  }
-		  else if((SegmentTracker > 5) && (SegmentTracker < 10))
-		  {
-			  if(SegmentPointer == 6)
-			  {
-				  SegmentPointer = 0;
-			  }
-			  CurrentDisplay[0] = tm1637_Segments[SegmentPointer];
-			  CurrentDisplay[1] = 0;
-			  CurrentDisplay[2] = 0;
-			  CurrentDisplay[3] = 0;
-
-			  SegmentPointer ++;
-		  }
-		  else if(SegmentTracker == 4)
-		  {
-			  CurrentDisplay[0] = 0;
-			  CurrentDisplay[1] = 0;
-			  CurrentDisplay[2] = tm1637_Segments[SegmentPointer];
-			  CurrentDisplay[3] = 0;
-		  }
-		  else if(SegmentTracker == 5)
-		  {
-			  CurrentDisplay[0] = 0;
-			  CurrentDisplay[1] = tm1637_Segments[SegmentPointer];
-			  CurrentDisplay[2] = 0;
-			  CurrentDisplay[3] = 0;
-		  }
-		  else if(SegmentTracker == 10)
-		  {
-			  SegmentPointer = 0;
-			  CurrentDisplay[0] = 0;
-			  CurrentDisplay[1] = tm1637_Segments[SegmentPointer];
-			  CurrentDisplay[2] = 0;
-			  CurrentDisplay[3] = 0;
-		  }
-		  else if(SegmentTracker == 11)
-		  {
-			  CurrentDisplay[0] = 0;
-			  CurrentDisplay[1] = 0;
-			  CurrentDisplay[2] = tm1637_Segments[SegmentPointer];
-			  CurrentDisplay[3] = 0;
-		  }
-		  tm1637_DisplayHandle(7, CurrentDisplay);
-		  SegmentTracker++;
-		  if(SegmentTracker > 11)										//Once 12 steps are completed reset all trackers.
-		  {
-			  SegmentPointer = 0;
-			  SegmentTracker = 0;
-		  }
-
-	  }
-}
-
-uint8_t char2segments(char c) {
-        switch (c) {
-			case '0' : return 0x3f;
-			case '1' : return 0x06;
-			case '2' : return 0x5b;
-			case '3' : return 0x4f;
-			case '4' : return 0x66;
-			case '5' : return 0x6d;
-			case '6' : return 0x7d;
-			case '7' : return 0x07;
-			case '8' : return 0x7f;
-			case '9' : return 0x6f;
-            case '_' : return 0x08;
-            case '^' : return 0x01; // ¯
-            case '-' : return 0x40;
-            case '*' : return 0x63; // °
-            case ' ' : return 0x00; // space
-            case 'A' : return 0x77; // upper case A
-            case 'a' : return 0x5f; // lower case a
-            case 'B' :              // lower case b
-            case 'b' : return 0x7c; // lower case b
-            case 'C' : return 0x39; // upper case C
-            case 'c' : return 0x58; // lower case c
-            case 'D' :              // lower case d
-            case 'd' : return 0x5e; // lower case d
-            case 'E' :              // upper case E
-            case 'e' : return 0x79; // upper case E
-            case 'F' :              // upper case F
-            case 'f' : return 0x71; // upper case F
-            case 'G' :              // upper case G
-            case 'g' : return 0x35; // upper case G
-            case 'H' : return 0x76; // upper case H
-            case 'h' : return 0x74; // lower case h
-            case 'I' : return 0x06; // 1
-            case 'i' : return 0x04; // lower case i
-            case 'J' : return 0x1e; // upper case J
-            case 'j' : return 0x16; // lower case j
-            case 'K' :              // upper case K
-            case 'k' : return 0x75; // upper case K
-            case 'L' :              // upper case L
-            case 'l' : return 0x38; // upper case L
-            case 'M' :              // twice tall n
-            case 'm' : return 0x37; // twice tall ∩
-            case 'N' :              // lower case n
-            case 'n' : return 0x54; // lower case n
-            case 'O' :              // lower case o
-            case 'o' : return 0x5c; // lower case o
-            case 'P' :              // upper case P
-            case 'p' : return 0x73; // upper case P
-            case 'Q' : return 0x7b; // upper case Q
-            case 'q' : return 0x67; // lower case q
-            case 'R' :              // lower case r
-            case 'r' : return 0x50; // lower case r
-            case 'S' :              // 5
-            case 's' : return 0x6d; // 5
-            case 'T' :              // lower case t
-            case 't' : return 0x78; // lower case t
-            case 'U' :              // lower case u
-            case 'u' : return 0x1c; // lower case u
-            case 'V' :              // twice tall u
-            case 'v' : return 0x3e; // twice tall u
-            case 'W' : return 0x7e; // upside down A
-            case 'w' : return 0x2a; // separated w
-            case 'X' :              // upper case H
-            case 'x' : return 0x76; // upper case H
-            case 'Y' :              // lower case y
-            case 'y' : return 0x6e; // lower case y
-            case 'Z' :              // separated Z
-            case 'z' : return 0x1b; // separated Z
-        }
-        return 0;
-    }
+#if CONFIG_IDF_TARGET_ESP32
+#include <esp32/rom/ets_sys.h>
+#elif CONFIG_IDF_TARGET_ESP32S2
+#include <esp32s2/rom/ets_sys.h>
+#elif CONFIG_IDF_TARGET_ESP32S3
+#include <esp32s3/rom/ets_sys.h>
+#elif CONFIG_IDF_TARGET_ESP32C3
+#include <esp32c3/rom/ets_sys.h>
+#else
+#error "Unsupported ESP chip"
 #endif
+
+
+#define TM1637_ADDR_AUTO  0x40
+#define TM1637_ADDR_FIXED 0x44
+
+#define MINUS_SIGN_IDX  16
+
+static const int8_t tm1637_symbols[] = {
+                // XGFEDCBA
+        0x3f, // 0b00111111,    // 0
+        0x06, // 0b00000110,    // 1
+        0x5b, // 0b01011011,    // 2
+        0x4f, // 0b01001111,    // 3
+        0x66, // 0b01100110,    // 4
+        0x6d, // 0b01101101,    // 5
+        0x7d, // 0b01111101,    // 6
+        0x07, // 0b00000111,    // 7
+        0x7f, // 0b01111111,    // 8
+        0x6f, // 0b01101111,    // 9
+        0x77, // 0b01110111,    // A
+        0x7c, // 0b01111100,    // b
+        0x39, // 0b00111001,    // C
+        0x5e, // 0b01011110,    // d
+        0x79, // 0b01111001,    // E
+        0x71, // 0b01110001     // F
+        0x40, // 0b01000000     // minus sign
+};
+
+static void tm1637_start(tm1637_led_t * led);
+static void tm1637_stop(tm1637_led_t * led);
+static void tm1637_send_byte(tm1637_led_t * led, uint8_t byte);
+static void tm1637_delay();
+
+static inline float nearestf(float val,int precision) {
+    int scale = pow(10,precision);
+    return roundf(val * scale) / scale;
+}
+
+void tm1637_start(tm1637_led_t * led)
+{
+    // Send start signal
+    // Both outputs are expected to be HIGH beforehand
+    gpio_set_level(led->m_pin_dta, 0);
+    tm1637_delay();
+}
+
+void tm1637_stop(tm1637_led_t * led)
+{
+    // Send stop signal
+    // CLK is expected to be LOW beforehand
+    gpio_set_level(led->m_pin_dta, 0);
+    tm1637_delay();
+    gpio_set_level(led->m_pin_clk, 1);
+    tm1637_delay();
+    gpio_set_level(led->m_pin_dta, 1);
+    tm1637_delay();
+}
+
+void tm1637_send_byte(tm1637_led_t * led, uint8_t byte)
+{
+    for (uint8_t i=0; i<8; ++i)
+    {
+        gpio_set_level(led->m_pin_clk, 0);
+        tm1637_delay();
+        gpio_set_level(led->m_pin_dta, byte & 0x01); // Send current bit
+        byte >>= 1;
+        tm1637_delay();
+        gpio_set_level(led->m_pin_clk, 1);
+        tm1637_delay();
+    }
+
+    // The TM1637 signals an ACK by pulling DIO low from the falling edge of
+    // CLK after sending the 8th bit, to the next falling edge of CLK.
+    // DIO needs to be set as input during this time to avoid having both
+    // chips trying to drive DIO at the same time.
+    gpio_set_direction(led->m_pin_dta, GPIO_MODE_INPUT);
+    gpio_set_level(led->m_pin_clk, 0); // TM1637 starts ACK (pulls DIO low)
+    tm1637_delay();
+    gpio_set_level(led->m_pin_clk, 1);
+    tm1637_delay();
+    gpio_set_level(led->m_pin_clk, 0); // TM1637 ends ACK (releasing DIO)
+    tm1637_delay();
+    gpio_set_direction(led->m_pin_dta, GPIO_MODE_OUTPUT);
+}
+
+void tm1637_delay()
+{
+    ets_delay_us(3);
+}
+
+// PUBLIC PART:
+
+tm1637_led_t * tm1637_init(gpio_num_t pin_clk, gpio_num_t pin_data) {
+    tm1637_led_t * led = (tm1637_led_t *) malloc(sizeof(tm1637_led_t));
+    led->m_pin_clk = pin_clk;
+    led->m_pin_dta = pin_data;
+    led->m_brightness = 0;
+    // Set CLK to low during DIO initialization to avoid sending a start signal by mistake
+    gpio_set_direction(pin_clk, GPIO_MODE_OUTPUT);
+    gpio_set_level(pin_clk, 0);
+    tm1637_delay();
+    gpio_set_direction(pin_data, GPIO_MODE_OUTPUT);
+    gpio_set_level(pin_data, 1);
+    tm1637_delay();
+    gpio_set_level(pin_clk, 1);
+    tm1637_delay();
+    return led;
+}
+
+void tm1637_set_brightness(tm1637_led_t * led, uint8_t level)
+{
+    if (level > 0x07) { level = 0x07; } // Check max level
+    led->m_brightness = level;
+}
+
+void tm1637_set_segment_number(tm1637_led_t * led, const uint8_t segment_idx, const uint8_t num, const bool dot)
+{
+    uint8_t seg_data = 0x00;
+
+    if (num < (sizeof(tm1637_symbols)/sizeof(tm1637_symbols[0]))) {
+        seg_data = tm1637_symbols[num]; // Select proper segment image
+    }
+
+    if (dot) {
+        seg_data |= 0x80; // Set DOT segment flag
+    }
+
+    tm1637_set_segment_raw(led, segment_idx, seg_data);
+}
+
+void tm1637_set_segment_raw(tm1637_led_t * led, const uint8_t segment_idx, const uint8_t data)
+{
+    tm1637_start(led);
+    tm1637_send_byte(led, TM1637_ADDR_FIXED);
+    tm1637_stop(led);
+    tm1637_start(led);
+    tm1637_send_byte(led, segment_idx | 0xc0);
+    tm1637_send_byte(led, data);
+    tm1637_stop(led);
+    tm1637_start(led);
+    tm1637_send_byte(led, led->m_brightness | 0x88);
+    tm1637_stop(led);
+}
+
+void tm1637_set_number(tm1637_led_t * led, uint16_t number)
+{
+    tm1637_set_number_lead_dot(led, number, false, 0x00);
+}
+
+void tm1637_set_number_lead(tm1637_led_t * led, uint16_t number, const bool lead_zero)
+{
+    tm1637_set_number_lead_dot(led, number, lead_zero, 0x00);
+}
+
+void tm1637_set_number_lead_dot(tm1637_led_t * led, uint16_t number, bool lead_zero, const uint8_t dot_mask)
+{
+    uint8_t lead_number = lead_zero ? 0xFF : tm1637_symbols[0];
+
+    if (number < 10) {
+        tm1637_set_segment_number(led, 3, number, dot_mask & 0x01);
+        tm1637_set_segment_number(led, 2, lead_number, dot_mask & 0x02);
+        tm1637_set_segment_number(led, 1, lead_number, dot_mask & 0x04);
+        tm1637_set_segment_number(led, 0, lead_number, dot_mask & 0x08);
+    } else if (number < 100) {
+        tm1637_set_segment_number(led, 3, number % 10, dot_mask & 0x01);
+        tm1637_set_segment_number(led, 2, (number / 10) % 10, dot_mask & 0x02);
+        tm1637_set_segment_number(led, 1, lead_number, dot_mask & 0x04);
+        tm1637_set_segment_number(led, 0, lead_number, dot_mask & 0x08);
+    } else if (number < 1000) {
+        tm1637_set_segment_number(led, 3, number % 10, dot_mask & 0x01);
+        tm1637_set_segment_number(led, 2, (number / 10) % 10, dot_mask & 0x02);
+        tm1637_set_segment_number(led, 1, (number / 100) % 10, dot_mask & 0x04);
+        tm1637_set_segment_number(led, 0, lead_number, dot_mask & 0x08);
+    } else {
+        tm1637_set_segment_number(led, 3, number % 10, dot_mask & 0x01);
+        tm1637_set_segment_number(led, 2, (number / 10) % 10, dot_mask & 0x02);
+        tm1637_set_segment_number(led, 1, (number / 100) % 10, dot_mask & 0x04);
+        tm1637_set_segment_number(led, 0, (number / 1000) % 10, dot_mask & 0x08);
+    }
+}
+
+void tm1637_set_float(tm1637_led_t * led, float n) {
+    if( n < 0 ) {
+        tm1637_set_segment_number(led, 0, MINUS_SIGN_IDX, 0);
+        float absn = nearestf(fabs(n),1);
+        int int_part = (int)absn;
+        float fx_part = absn - int_part;
+        if( absn < 10 ) {
+            fx_part *= 100;
+            tm1637_set_segment_number(led, 1, (int)(absn + 0.5), 1 );
+            tm1637_set_segment_number(led, 2, ((int)fx_part/10) % 10, 0 );
+            tm1637_set_segment_number(led, 3, ((int)fx_part) % 10, 0 );
+        }
+        else if( n < 100 ) {
+            fx_part *= 100;
+            uint8_t f = ((int)fx_part % 10);
+            
+            tm1637_set_segment_number(led, 1, (int_part/10) % 10, 0 );
+            tm1637_set_segment_number(led, 2, int_part % 10, 1 );
+            tm1637_set_segment_number(led, 3, ((int)fx_part/10) % 10 + ((f > 4)?1:0), 0 );
+        }
+        else if( n < 1000 ) {
+            tm1637_set_segment_number(led, 1, (int_part/100) % 10, 0 );
+            tm1637_set_segment_number(led, 2, (int_part/10) % 10, 0 );
+            tm1637_set_segment_number(led, 3, (int_part % 10) + ((fx_part >= 0.5 )?1:0), 0 );
+        }
+    }
+    else {
+        //  positive number
+        int int_part = (int)n;
+        float fx_part = n - int_part;
+        if( n < 10 ) {
+            n = nearestf(n,1);
+            int_part = (int)n;
+            fx_part = 10000 * (n - int_part);
+            
+            tm1637_set_segment_number(led, 0, int_part, 1);
+            tm1637_set_segment_number(led, 1, ((int)fx_part/1000) % 10, 0 );
+            tm1637_set_segment_number(led, 2, ((int)fx_part/100) % 10, 0 );
+            tm1637_set_segment_number(led, 3, ((int)fx_part/10) % 10, 0 );
+        }
+        else if( n < 100 ) {
+            n = nearestf(n,2);
+            int_part = (int)n;
+            fx_part = 1000 * (n - int_part);
+            
+            tm1637_set_segment_number(led, 0, (int_part/10) % 10, 0);
+            tm1637_set_segment_number(led, 1, int_part % 10, 1 );
+            tm1637_set_segment_number(led, 2, ((int)fx_part/100) % 10, 0 );
+            tm1637_set_segment_number(led, 3, ((int)fx_part/10) % 10,0);
+        }
+        else if( n < 1000 ) {
+            n = nearestf(n,2);
+            int_part = (int)n;
+            fx_part = 100 * (n - int_part);
+            
+            tm1637_set_segment_number(led, 0, (int_part/100) % 10, 0);
+            tm1637_set_segment_number(led, 1, (int_part/10) % 10, 0 );
+            tm1637_set_segment_number(led, 2, int_part % 10, 1 );
+            tm1637_set_segment_number(led, 3, ((int)fx_part/10) % 10, 0 );
+        }
+    }
+}
