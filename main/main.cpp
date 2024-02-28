@@ -13,6 +13,8 @@ extern "C" {
 #include "tm1637.h"
 }
 
+// EY cosas
+
 std::string text;
 
 const gpio_num_t LED_CLK = GPIO_NUM_16;
